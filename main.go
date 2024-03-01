@@ -1,55 +1,89 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
 
+type ViaCep struct {
+	Cep         string `json:"cep"`
+	Logradouro  string `json:"logradouro"`
+	Complemento string `json:"complemento"`
+	Bairro      string `json:"bairro"`
+	Localidade  string `json:"localidade"`
+	Uf          string `json:"uf"`
+	Ibge        string `json:"ibge"`
+	Gia         string `json:"gia"`
+	Ddd         string `json:"ddd"`
+	Siafi       string `json:"siafi"`
+}
+
+type BrasilApiCep struct {
+	Cep          string `json:"cep"`
+	State        string `json:"state"`
+	City         string `json:"city"`
+	Neighborhood string `json:"neighborhood"`
+	Street       string `json:"street"`
+	Service      string `json:"service"`
+}
+
 func main() {
-	url1 := "https://cdn.apicep.com/file/apicep/"
-	end_url1 := ".json"
+	fmt.Println("Input cep: ")
+	var cepIn string
+	_, err := fmt.Scanln(&cepIn)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	url2 := "http://viacep.com.br/ws/"
-	end_url2 := "/json/"
+	chanelViaCep := make(chan ViaCep)
+	chanelBrasilApiCep := make(chan BrasilApiCep)
 
-	cep := "13423-100"
+	var viaCepReturn ViaCep
+	var BrasilApiCepReturn BrasilApiCep
 
-	c1 := make(chan string)
-	c2 := make(chan string)
-
-	go func() {
-		resp := CallCepApi(url1, cep, end_url1)
-		c1 <- "ApiCEP.com respondeu mais rápido com o resultado: " + resp + "\n"
-	}()
-
-	go func() {
-		resp := CallCepApi(url2, cep, end_url2)
-		c2 <- "ViaCEP respondeu mais rápido com o resultado: " + resp + "\n"
-	}()
+	go goRoutinesGetCep("http://viacep.com.br/ws/"+cepIn+"/json", viaCepReturn, chanelViaCep)
+	go goRoutinesGetCep("http://brasilapi.com.br/api/cep/v1/"+cepIn, BrasilApiCepReturn, chanelBrasilApiCep)
 
 	select {
-	case msg := <-c1: // APICep.com
-		fmt.Printf(msg)
+	case returnViaCep := <-chanelViaCep:
+		fmt.Printf("Return from ViaCep: \n %v\n", returnViaCep)
 
-	case msg := <-c2: // ViaCEP
-		fmt.Printf(msg)
+	case returnBrasilApiCep := <-chanelBrasilApiCep:
+		if returnBrasilApiCep.Cep != "" {
+			fmt.Printf("Return from BrasilApiCep: \n %v\n", returnBrasilApiCep)
+		} else {
+			fmt.Printf("Return from BrasilApiCep: All CEP services returned an error.")
+		}
 
 	case <-time.After(time.Second):
-		println("Timeout!")
+		panic("Timeout error!")
 	}
 }
 
-func CallCepApi(url string, cep string, end_url string) string {
-	req, err := http.Get(url + cep + end_url)
+func goRoutinesGetCep[T any](url string, returnApiStruct T, chanelApiCep chan T) {
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		panic(err)
+		log.Printf("Error creating request: %v", err)
 	}
-	defer req.Body.Close()
-	res, err := io.ReadAll(req.Body)
+
+	client := http.DefaultClient
+	res, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		log.Printf("Error in request: %v", err)
 	}
-	return string(res)
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		log.Printf("Error reading body: %v", err)
+	}
+
+	err = json.Unmarshal(body, &returnApiStruct)
+	if err != nil {
+		log.Printf("Error parsing json: %v", err)
+	}
+	chanelApiCep <- returnApiStruct
 }
